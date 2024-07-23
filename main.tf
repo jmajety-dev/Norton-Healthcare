@@ -147,7 +147,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role     = aws_iam_role.ec2_role.name
 }
 
-# EC2 Instances in us-east-1
+# EC2 Instances in us-east-1 Web server
 resource "aws_instance" "web_instance_1a_1" {
   provider                 = aws.us-east-1
   ami                      = "ami-0b72821e2f351e396" # Amazon Linux 2 AMI
@@ -155,11 +155,14 @@ resource "aws_instance" "web_instance_1a_1" {
   subnet_id                = aws_subnet.public_subnet_1a.id
   vpc_security_group_ids   = [aws_security_group.web_sg.id]
   iam_instance_profile     = aws_iam_instance_profile.ec2_profile.name
+ 
 
   tags = {
     Name = "web-instance-1a-1"
   }
 }
+
+# EC2 Instances in us-east-1 Application server
 
 resource "aws_instance" "web_instance_1a_2" {
   provider                 = aws.us-east-1
@@ -168,6 +171,15 @@ resource "aws_instance" "web_instance_1a_2" {
   subnet_id                = aws_subnet.public_subnet_1a.id
   vpc_security_group_ids   = [aws_security_group.web_sg.id]
   iam_instance_profile     = aws_iam_instance_profile.ec2_profile.name
+   user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              yum install -y httpd mysql
+              systemctl start httpd
+              systemctl enable httpd
+              echo "Hello World from $(hostname -f)" > /var/www/html/index.html
+              echo "RDS Endpoint: ${aws_db_instance.default.endpoint}" >> /var/www/html/index.html
+              EOF
 
   tags = {
     Name = "web-instance-1a-2"
@@ -183,6 +195,7 @@ resource "aws_autoscaling_group" "web_asg_us_east_1a" {
   vpc_zone_identifier      = [aws_subnet.public_subnet_1a.id] # us-east-1a
   launch_configuration     = aws_launch_configuration.web_lc_us_east_1a.id
   target_group_arns        = [aws_lb_target_group.web_tg_us_east_1.id]
+  
 
   tag {
     key                    = "Name"
@@ -326,7 +339,7 @@ resource "aws_iam_instance_profile" "ec2_profile_us_east_2" {
   name     = "ec2-profile-us-east-2"
   role     = aws_iam_role.ec2_role_us_east_2.name
 }
-
+# EC2 Instances in us-east-2 Web server
 resource "aws_instance" "web_instance_us_east_2a_1" {
   provider                 = aws.us-east-2
   ami                      = "ami-00db8dadb36c9815e" # Amazon Linux 2 AMI for us-east-2
@@ -339,7 +352,7 @@ resource "aws_instance" "web_instance_us_east_2a_1" {
     Name = "web-instance-us-east-2a-1"
   }
 }
-
+# EC2 Instances in us-east-2 Web server
 resource "aws_instance" "web_instance_us_east_2a_2" {
   provider                 = aws.us-east-2
   ami                      = "ami-00db8dadb36c9815e" # Amazon Linux 2 AMI for us-east-2
@@ -429,5 +442,141 @@ resource "aws_lb_target_group" "web_tg_us_east_2" {
 
   tags = {
     Name = "web-target-group-us-east-2"
+  }
+}
+provider "aws" {
+  alias  = "us-west-1"
+  region = "us-west-1"
+}
+resource "aws_db_instance" "default" {
+  provider = aws.us-east-1
+
+  allocated_storage    = 20
+  storage_type         = "gp2"
+  engine               = "mysql"
+  engine_version       = "8.0"
+  instance_class       = "db.t3.micro"
+  name                 = "mydatabase"
+  username             = "admin"
+  password             = "password"
+  parameter_group_name = "default.mysql8.0"
+  skip_final_snapshot  = true
+
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
+
+  tags = {
+    Name = "my-rds-instance"
+  }
+}
+
+resource "aws_db_subnet_group" "rds_subnet_group" {
+  provider = aws.us-east-1
+
+  name       = "rds-subnet-group"
+  subnet_ids = [aws_subnet.public_subnet_1a.id, aws_subnet.public_subnet_1b.id]
+
+  tags = {
+    Name = "rds-subnet-group"
+  }
+}
+
+resource "aws_security_group" "rds_sg" {
+  provider = aws.us-east-1
+  vpc_id   = aws_vpc.norton_vpc.id
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "rds-sg"
+  }
+}
+resource "aws_vpc" "norton_vpc_us_west_1" {
+  provider   = aws.us-west-1
+  cidr_block = "10.1.0.0/16"
+  tags = {
+    Name = "norton-vpc-us-west-1"
+  }
+}
+
+resource "aws_subnet" "public_subnet_us_west_1a" {
+  provider                  = aws.us-west-1
+  vpc_id                    = aws_vpc.norton_vpc_us_west_1.id
+  cidr_block                = "10.1.1.0/24"
+  map_public_ip_on_launch   = true
+  availability_zone         = "us-west-1a"
+  tags = {
+    Name = "public-subnet-us-west-1a"
+  }
+}
+
+resource "aws_subnet" "public_subnet_us_west_1b" {
+  provider                  = aws.us-west-1
+  vpc_id                    = aws_vpc.norton_vpc_us_west_1.id
+  cidr_block                = "10.1.2.0/24"
+  map_public_ip_on_launch   = true
+  availability_zone         = "us-west-1a"
+  tags = {
+    Name = "public-subnet-us-west-1b"
+  }
+}
+
+resource "aws_db_subnet_group" "rds_subnet_group_us_west_1" {
+  provider = aws.us-west-1
+
+  name       = "rds-subnet-group-us-west-1"
+  subnet_ids = [aws_subnet.public_subnet_us_west_1a.id, aws_subnet.public_subnet_us_west_1b.id]
+
+  tags = {
+    Name = "rds-subnet-group-us-west-1"
+  }
+}
+
+resource "aws_security_group" "rds_sg_us_west_1" {
+  provider = aws.us-west-1
+  vpc_id   = aws_vpc.norton_vpc_us_west_1.id
+
+  ingress {
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "rds-sg-us-west-1"
+  }
+}
+
+resource "aws_db_instance" "read_replica" {
+  provider               = aws.us-west-1
+  identifier             = "mydatabase-replica"
+  replicate_source_db    = aws_db_instance.default.arn
+  instance_class         = "db.t3.micro"
+  storage_type           = "gp2"
+  db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group_us_west_1.name
+  vpc_security_group_ids = [aws_security_group.rds_sg_us_west_1.id]
+
+  tags = {
+    Name = "my-rds-instance-replica"
   }
 }

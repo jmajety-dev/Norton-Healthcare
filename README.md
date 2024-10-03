@@ -1,12 +1,11 @@
 # NortonHealthcare Infrastructure Project
 
-This repository contains the Terraform infrastructure code for managing AWS services such as DNSSEC, AWS Firewall, Route 53, CloudFront, API Gateway, AWS Backup, GuardDuty, Macie, and CloudWatch, with an emphasis on security and HIPAA compliance for NortonHealthcare.
+This repository contains the Terraform infrastructure code for managing AWS services such as AWS Firewall, Route 53, CloudFront, API Gateway, AWS Backup, GuardDuty, Macie, and CloudWatch, with an emphasis on security and HIPAA compliance for NortonHealthcare.
 
 ## Table of Contents
 - [Architecture](#architecture)
 - [Features](#features)
 - [Setup Instructions](#setup-instructions)
-- [Sensitive Data](#sensitive-data)
 - [HIPAA Compliance](#hipaa-compliance)
 - [Disaster Recovery Plan](#disaster-recovery-plan)
 - [License](#license)
@@ -18,7 +17,7 @@ The following architecture demonstrates the overall cloud infrastructure designe
 ![NortonHealthcare Architecture](NortonHealthcare.jpeg)
 
 ## Features
-- **DNSSEC and Route 53**: DNS security and routing are configured to protect DNS integrity.
+- **Route 53**: DNS security and routing are configured to protect DNS integrity.
 - **AWS Firewall Manager**: Provides centralized management of VPC security policies.
 - **CloudFront**: Content distribution for API Gateway and other static content.
 - **API Gateway**: Secure API Gateway setup with Route 53 routing.
@@ -37,7 +36,7 @@ The following architecture demonstrates the overall cloud infrastructure designe
 1. Clone this repository:
     ```bash
     git clone https://github.com/jmajety-lab/Norton-Healthcare.git
-    cd nortonhealthcare-infra
+    cd Norton-Healthcare
     ```
 2. Initialize Terraform:
     ```bash

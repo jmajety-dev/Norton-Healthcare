@@ -1113,3 +1113,492 @@ resource "aws_iam_role_policy_attachment" "backup_policy_attach" {
   role       = aws_iam_role.backup_role.name
   policy_arn = aws_iam_policy.backup_policy.arn
 }
+
+# Create IAM Security IT Team Group
+resource "aws_iam_group" "security_it_team_group" {
+  name = "security-it-team-group"
+}
+
+# Permissions for the Security IT Team Group
+resource "aws_iam_group_policy" "security_team_policy" {
+  group = aws_iam_group.security_it_team_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "guardduty:*",
+          "inspector:*",
+          "cloudtrail:*",
+          "macie2:*",
+          "cloudwatch:*",
+          "logs:*",
+          "sns:*"
+        ],
+        Effect = "Allow",
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Create an SNS Topic for Notifications
+resource "aws_sns_topic" "backup_notifications" {
+  name = "backup-notifications"
+}
+
+# Create SNS Topic Subscription (Email) for IT Security Team
+resource "aws_sns_topic_subscription" "email_subscription" {
+  topic_arn = aws_sns_topic.backup_notifications.arn
+  protocol  = "email"
+  endpoint  = "securityteam@example.com"  # Replace with the actual email of the security team
+}
+
+# Allow SNS to be used by backup services
+resource "aws_iam_role_policy_attachment" "sns_backup_policy_attach" {
+  role       = aws_iam_role.backup_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
+}
+# Weekly Backup Plan for RDS and S3
+resource "aws_backup_plan" "database_backup_plan_weekly" {
+  name = "database-backup-plan-weekly"
+  rule {
+    rule_name         = "weekly-backup"
+    target_vault_name = aws_backup_vault.database_backup_vault.name
+    schedule          = "cron(0 12 ? * 1 *)"  # Weekly backup every Monday at 12 PM UTC
+    lifecycle {
+      delete_after = 30  # Retain backups for 30 days
+    }
+  }
+}
+
+# SNS Notification for Backup Events
+resource "aws_backup_vault_notifications" "vault_notifications" {
+  backup_vault_name = aws_backup_vault.database_backup_vault.name
+  sns_topic_arn     = aws_sns_topic.backup_notifications.arn
+  backup_vault_events = ["BACKUP_JOB_COMPLETED", "BACKUP_JOB_FAILED"]
+}
+
+# Enable GuardDuty
+resource "aws_guardduty_detector" "guardduty" {
+  enable = true
+}
+
+# Enable AWS Inspector
+resource "aws_inspector_assessment_template" "inspector_template" {
+  name             = "inspector-template"
+  target_arn       = aws_inspector_assessment_target.example.arn
+  duration = 3600  # Duration of the assessment (1 hour)
+  rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]  # Replace with your actual rules package ARN
+}
+
+resource "aws_inspector_assessment_target" "example" {
+  name = "example-target"
+}
+
+# Enable CloudTrail
+resource "aws_cloudtrail" "cloudtrail" {
+  name                          = "security-cloudtrail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.bucket
+  include_global_service_events = true
+  is_multi_region_trail         = true
+  enable_log_file_validation    = true
+}
+
+# S3 Bucket for CloudTrail logs
+resource "aws_s3_bucket" "cloudtrail_logs" {
+  bucket = "cloudtrail-logs-bucket"
+
+}
+
+
+# # Enable Macie
+# resource "aws_macie2_classification_job" "macie_job" {
+#   name        = "sensitive-data-classification"
+#   s3_job_definition {
+#     bucket_definitions {
+#       account_id   = "123456789012"  # Replace with your account ID
+#       buckets      = [aws_s3_bucket.sensitive_data_bucket.id]
+#     }
+#   }
+#   job_type = "ONE_TIME"
+# }
+
+# Enable CloudWatch Alarm for EC2 CPU Utilization
+resource "aws_cloudwatch_metric_alarm" "cpu_utilization_alarm" {
+  alarm_name          = "high-cpu-utilization"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "80"
+  alarm_description   = "Alarm when CPU utilization exceeds 80%"
+  alarm_actions       = [aws_sns_topic.backup_notifications.arn]
+  dimensions = {
+    InstanceId = "i-0123456789abcdef0"  # Replace with your EC2 instance ID
+  }
+}
+
+# CloudWatch Log Group for application logs
+resource "aws_cloudwatch_log_group" "app_log_group" {
+  name              = "/aws/lambda/app-log-group"
+  retention_in_days = 30
+}
+
+# Create CloudWatch Logs Metric Filter for Security Alarms
+resource "aws_cloudwatch_log_metric_filter" "unauthorized_access_filter" {
+  name                  = "unauthorized-access-filter"
+  log_group_name        = aws_cloudwatch_log_group.app_log_group.name
+  pattern               = "{ $.eventName = \"UnauthorizedAccess\" }"
+  metric_transformation {
+    name      = "UnauthorizedAccessCount"
+    namespace = "SecurityMetrics"
+    value     = "1"
+  }
+}
+
+# CloudWatch Alarm for Unauthorized Access Metric
+resource "aws_cloudwatch_metric_alarm" "unauthorized_access_alarm" {
+  alarm_name          = "unauthorized-access-alarm"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "UnauthorizedAccessCount"
+  namespace           = "SecurityMetrics"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Triggers when there is unauthorized access detected"
+  alarm_actions       = [aws_sns_topic.backup_notifications.arn]
+}
+
+# Create an SNS Topic for Security Notifications
+resource "aws_sns_topic" "security_notifications" {
+  name = "security-notifications"
+}
+
+# Create SNS Topic Subscription for Email (Security IT Team)
+resource "aws_sns_topic_subscription" "email_subscription_security_team" {
+  topic_arn = aws_sns_topic.security_notifications.arn
+  protocol  = "email"
+  endpoint  = "securityteam@example.com"  # Replace with the actual email
+}
+# Enable GuardDuty
+resource "aws_guardduty_detector" "guardduty_detector_security" {
+  enable = true
+}
+
+
+# Create CloudWatch Event Rule for GuardDuty findings
+resource "aws_cloudwatch_event_rule" "guardduty_findings_rule" {
+  name        = "guardduty-findings-rule"
+  description = "Capture GuardDuty findings"
+  event_pattern = jsonencode({
+    "source": [
+      "aws.guardduty"
+    ],
+    "detail-type": [
+      "GuardDuty Finding"
+    ]
+  })
+}
+
+# SNS Target for GuardDuty findings
+resource "aws_cloudwatch_event_target" "guardduty_findings_target" {
+  rule      = aws_cloudwatch_event_rule.guardduty_findings_rule.name
+  arn       = aws_sns_topic.security_notifications.arn
+}
+
+
+
+# Enable Inspector
+resource "aws_inspector_assessment_target" "inspector_target" {
+  name = "inspector-assessment-target"
+}
+
+# Rename the duplicate AWS Inspector resource
+resource "aws_inspector_assessment_template" "inspector_template_security" {
+  name             = "inspector-template-security"
+  target_arn       = aws_inspector_assessment_target.example.arn
+  duration         = 3600
+  rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]  # Replace with your actual rules package ARN
+}
+
+
+# SNS Target for Inspector Findings
+resource "aws_cloudwatch_event_rule" "inspector_rule" {
+  name        = "inspector-findings-rule"
+  description = "Send Inspector findings to SNS"
+  event_pattern = jsonencode({
+    "source": [
+      "aws.inspector"
+    ],
+    "detail-type": [
+      "Inspector Assessment Run State Change"
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "inspector_findings_target" {
+  rule = aws_cloudwatch_event_rule.inspector_rule.name
+  arn  = aws_sns_topic.security_notifications.arn
+}
+
+# Enable CloudTrail
+# Rename the duplicate CloudTrail resource
+resource "aws_cloudtrail" "cloudtrail_security" {
+  name                          = "security-cloudtrail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.bucket
+  include_global_service_events = true
+  is_multi_region_trail         = true
+  enable_log_file_validation    = true
+}
+
+
+# SNS Target for CloudTrail Events
+resource "aws_cloudwatch_event_rule" "cloudtrail_rule" {
+  name        = "cloudtrail-events-rule"
+  description = "Notify when critical CloudTrail events occur"
+  event_pattern = jsonencode({
+    "source": [
+      "aws.cloudtrail"
+    ],
+    "detail-type": [
+      "AWS API Call via CloudTrail"
+    ],
+    "detail": {
+      "eventName": [
+        "ConsoleLogin",
+        "UnauthorizedAccess"
+      ]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "cloudtrail_target" {
+  rule = aws_cloudwatch_event_rule.cloudtrail_rule.name
+  arn  = aws_sns_topic.security_notifications.arn
+}
+# # Macie Job for S3 Sensitive Data Discovery
+# resource "aws_macie2_classification_job" "macie_job_security" {
+#   name        = "sensitive-data-classification-security"
+#   s3_job_definition {
+#     bucket_definitions {
+#       account_id   = "123456789012"  # Replace with your account ID
+#       buckets      = [aws_s3_bucket.sensitive_data_bucket.id]
+#     }
+#   }
+#   job_type = "ONE_TIME"
+# }
+
+
+# SNS Target for Macie Findings
+resource "aws_cloudwatch_event_rule" "macie_rule" {
+  name        = "macie-findings-rule"
+  description = "Send Macie findings to SNS"
+  event_pattern = jsonencode({
+    "source": [
+      "aws.macie"
+    ],
+    "detail-type": [
+      "Macie Finding"
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "macie_target" {
+  rule = aws_cloudwatch_event_rule.macie_rule.name
+  arn  = aws_sns_topic.security_notifications.arn
+}
+# CloudWatch Alarm for EC2 CPU Utilization
+# Rename the duplicate CloudWatch metric alarm for CPU utilization
+resource "aws_cloudwatch_metric_alarm" "cpu_utilization_alarm_security" {
+  alarm_name          = "high-cpu-utilization-security"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "80"
+  alarm_actions       = [aws_sns_topic.security_notifications.arn]
+}
+
+# Rename the duplicate CloudWatch metric alarm for unauthorized access
+resource "aws_cloudwatch_metric_alarm" "unauthorized_access_alarm_security" {
+  alarm_name          = "unauthorized-access-alarm-security"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "UnauthorizedAccessCount"
+  namespace           = "SecurityMetrics"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_actions       = [aws_sns_topic.security_notifications.arn]
+}
+
+# Create a Route 53 Hosted Zone
+resource "aws_route53_zone" "secure_zone" {
+  name = "norton.com"  # Replace with your domain name
+}
+
+# # Enable DNSSEC Signing
+# resource "aws_route53_dnssec" "secure_dnssec" {
+#   hosted_zone_id = aws_route53_zone.secure_zone.id
+# }
+
+# # Create a DNSSEC Key Signing Key (KSK)
+# resource "aws_kms_key" "dnssec_ksk" {
+#   description = "Key Signing Key for DNSSEC"
+# } not supported in Terraform
+
+
+# Create a Firewall Manager Admin Account
+resource "aws_organizations_organization" "organization" {
+  feature_set = "ALL"
+}
+
+resource "aws_fms_admin_account" "firewall_admin" {
+  account_id = "123456789012"  # Replace with the firewall manager admin account ID
+}
+
+# Attach Policy to Security IT Team Group for Firewall Management
+resource "aws_iam_group_policy" "firewall_policy" {
+  group = aws_iam_group.security_it_team_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "fms:*",       # Full access to Firewall Manager
+          "wafv2:*",     # Access to Web Application Firewall (WAF)
+          "ec2:Describe*",  # Access to describe network settings
+        ],
+        Effect = "Allow",
+        Resource = "*"
+      }
+    ]
+  })
+}
+# Create Route 53 Hosted Zone (if not already created in DNSSEC)
+resource "aws_route53_zone" "main_zone" {
+  name = "example.com"  # Replace with your domain name
+}
+
+# Declare the API Gateway Rest API
+resource "aws_api_gateway_rest_api" "example_api" {
+  name        = "example-api"
+  description = "Example API for Security IT Team"
+}
+
+# API Gateway Deployment (Required for invoking the API)
+resource "aws_api_gateway_deployment" "example_api_deployment" {
+  depends_on = [aws_api_gateway_rest_api.example_api]  # Ensure the API is created first
+  rest_api_id = aws_api_gateway_rest_api.example_api.id
+  stage_name  = "prod"  # Define the stage for deployment
+}
+
+# Fix the Route 53 Record referencing the API Gateway
+resource "aws_route53_record" "api_gateway_record" {
+  zone_id = aws_route53_zone.main_zone.id
+  name    = "api.example.com"  # Subdomain for the API Gateway
+  type    = "A"
+
+  alias {
+    name                   = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference
+    zone_id                = aws_api_gateway_rest_api.example_api.id  # Fix the zone reference
+    evaluate_target_health = true
+  }
+}
+
+# Fix the CloudFront Distribution referencing the API Gateway
+resource "aws_cloudfront_distribution" "api_gw_distribution" {
+  origin {
+    domain_name = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference
+    origin_id   = "api-gateway-origin"
+  }
+
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+
+  default_cache_behavior {
+    target_origin_id       = "api-gateway-origin"
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD"]
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+# Route 53 Alias record to CloudFront
+resource "aws_route53_record" "cloudfront_alias" {
+  zone_id = aws_route53_zone.main_zone.id
+  name    = "cdn.example.com"  # Subdomain for CloudFront
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.api_gw_distribution.domain_name
+    zone_id                = aws_cloudfront_distribution.api_gw_distribution.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+# API Gateway Setup (Already created, adding security permissions)
+
+# Attach API Gateway Access for IT Security Team
+resource "aws_iam_group_policy" "api_gateway_policy" {
+  group = aws_iam_group.security_it_team_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "apigateway:*"  # Full access to API Gateway
+        ],
+        Effect = "Allow",
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+
+
+# SNS Integration for Route 53 Changes
+resource "aws_cloudwatch_event_rule" "route53_changes_rule" {
+  name        = "route53-changes-rule"
+  description = "Notify on Route 53 changes"
+  event_pattern = jsonencode({
+    "source": [
+      "aws.route53"
+    ],
+    "detail-type": [
+      "AWS API Call via CloudTrail"
+    ]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "route53_changes_sns_target" {
+  rule = aws_cloudwatch_event_rule.route53_changes_rule.name
+  arn  = aws_sns_topic.security_notifications.arn
+}

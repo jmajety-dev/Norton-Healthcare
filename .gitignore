@@ -1,2 +1,11 @@
 .terraform/
 
+# macOS files
+.DS_Store
+
+# IntelliJ IDEA project folder
+.idea/
+
+# Terraform state files
+*.tfstate
+*.tfstate.backup

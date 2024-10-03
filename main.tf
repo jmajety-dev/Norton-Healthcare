@@ -580,3 +580,536 @@ resource "aws_db_instance" "read_replica" {
     Name = "my-rds-instance-replica"
   }
 }
+
+
+resource "aws_s3_bucket" "primary_backup_bucket" {
+  provider = aws.us-east-1
+  bucket   = "primary-backup-bucket"
+
+  tags = {
+    Name = "primary-backup-bucket"
+  }
+}
+
+resource "aws_s3_bucket" "secondary_backup_bucket" {
+  provider = aws.us-west-1
+  bucket   = "secondary-backup-bucket"
+
+  tags = {
+    Name = "secondary-backup-bucket"
+  }
+}
+
+# Server-side encryption for the primary bucket
+resource "aws_s3_bucket_server_side_encryption_configuration" "primary_backup_encryption" {
+  bucket = aws_s3_bucket.primary_backup_bucket.bucket
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+  }
+}
+
+# Server-side encryption for the secondary bucket
+resource "aws_s3_bucket_server_side_encryption_configuration" "secondary_backup_encryption" {
+  bucket = aws_s3_bucket.secondary_backup_bucket.bucket
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+  }
+}
+
+
+# Versioning for the primary bucket
+resource "aws_s3_bucket_versioning" "primary_backup_versioning" {
+  bucket = aws_s3_bucket.primary_backup_bucket.bucket
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Versioning for the secondary bucket
+resource "aws_s3_bucket_versioning" "secondary_backup_versioning" {
+  bucket = aws_s3_bucket.secondary_backup_bucket.bucket
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Cross-region replication configuration
+resource "aws_s3_bucket_replication_configuration" "replication" {
+  provider = aws.us-east-1
+  role     = aws_iam_role.s3_replication_role.arn
+  bucket   = aws_s3_bucket.primary_backup_bucket.bucket
+
+  rule {
+    id     = "replication-rule"
+    status = "Enabled"
+
+    destination {
+      bucket        = aws_s3_bucket.secondary_backup_bucket.arn
+      storage_class = "STANDARD"
+    }
+
+    filter {
+      prefix = ""
+    }
+  }
+}
+
+resource "aws_iam_role" "s3_replication_role" {
+  name = "s3-replication-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
+      Principal = {
+        Service = "s3.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "s3_replication_policy" {
+  name = "s3-replication-policy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "s3:GetObjectVersion",
+          "s3:ListBucket"
+        ]
+        Effect   = "Allow"
+        Resource = [
+          aws_s3_bucket.primary_backup_bucket.arn,
+          "${aws_s3_bucket.primary_backup_bucket.arn}/*"
+        ]
+      },
+      {
+        Action   = "s3:ReplicateObject"
+        Effect   = "Allow"
+        Resource = "${aws_s3_bucket.secondary_backup_bucket.arn}/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "s3_replication_policy_attachment" {
+  role       = aws_iam_role.s3_replication_role.name
+  policy_arn = aws_iam_policy.s3_replication_policy.arn
+}
+
+# Enable automated RDS snapshot backups
+resource "aws_rds_cluster" "norton_rds_cluster" {
+  provider = aws.us-east-1
+  cluster_identifier = "norton-rds-cluster"
+  engine = "aurora-mysql"
+  backup_retention_period = 7
+  preferred_backup_window = "07:00-09:00"
+  # Additional RDS settings
+}
+
+# Snapshot copies to secondary region
+resource "aws_db_cluster_snapshot" "norton_rds_snapshot" {
+  provider = aws.us-east-1
+  db_cluster_identifier = aws_rds_cluster.norton_rds_cluster.id
+  db_cluster_snapshot_identifier = "norton-rds-snapshot"
+}
+
+resource "aws_s3_bucket_object" "rds_snapshot_backup" {
+  provider = aws.us-west-1
+  bucket = aws_s3_bucket.secondary_backup_bucket.bucket
+  key    = "rds-backup/${aws_db_cluster_snapshot.norton_rds_snapshot.id}.snap"
+
+  source = aws_db_cluster_snapshot.norton_rds_snapshot.db_cluster_snapshot_identifier
+}
+
+# Create the IAM Developer Group
+resource "aws_iam_group" "developer_group" {
+  name = "developer-group"
+}
+
+# Attach EC2, RDS, S3, API Gateway, and CodePipeline policies to the group
+
+# EC2 Policy
+resource "aws_iam_group_policy" "developer_ec2_policy" {
+  group = aws_iam_group.developer_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "ec2:Describe*",
+          "ec2:StartInstances",
+          "ec2:StopInstances",
+          "ec2:RebootInstances",
+          "ec2:TerminateInstances"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# RDS Policy
+resource "aws_iam_group_policy" "developer_rds_policy" {
+  group = aws_iam_group.developer_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "rds:Describe*",
+          "rds:StartDBInstance",
+          "rds:StopDBInstance",
+          "rds:ModifyDBInstance"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# S3 Policy
+resource "aws_iam_group_policy" "developer_s3_policy" {
+  group = aws_iam_group.developer_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Effect   = "Allow"
+        Resource = [
+          "arn:aws:s3:::*",
+          "arn:aws:s3:::*/*"
+        ]
+      }
+    ]
+  })
+}
+
+# API Gateway Policy
+resource "aws_iam_group_policy" "developer_api_gateway_policy" {
+  group = aws_iam_group.developer_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "apigateway:GET",
+          "apigateway:POST",
+          "apigateway:DELETE",
+          "apigateway:PUT"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# CodePipeline Policy
+resource "aws_iam_group_policy" "developer_codepipeline_policy" {
+  group = aws_iam_group.developer_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action   = [
+          "codepipeline:StartPipelineExecution",
+          "codepipeline:GetPipelineState",
+          "codepipeline:GetPipelineExecution",
+          "codepipeline:ListPipelines"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+# Attach an existing IAM user to the developer group
+resource "aws_iam_group_membership" "developer_group_membership" {
+  name = "developer-group-membership"
+  group = aws_iam_group.developer_group.name
+
+  users = [
+    "developer1",
+    "developer2" # Add more user names as needed
+  ]
+}
+# Create API Gateway
+resource "aws_api_gateway_rest_api" "developer_api" {
+  name        = "DeveloperAPI"
+  description = "API Gateway for Developer Group"
+}
+
+# Create API Gateway Resource (Example resource under the root)
+resource "aws_api_gateway_resource" "developer_api_resource" {
+  rest_api_id = aws_api_gateway_rest_api.developer_api.id
+  parent_id   = aws_api_gateway_rest_api.developer_api.root_resource_id
+  path_part   = "developer-resource"
+}
+
+# Method for the resource
+resource "aws_api_gateway_method" "developer_api_method" {
+  rest_api_id   = aws_api_gateway_rest_api.developer_api.id
+  resource_id   = aws_api_gateway_resource.developer_api_resource.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
+
+# Integration with a Lambda (or other backend, example placeholder)
+resource "aws_api_gateway_integration" "developer_api_integration" {
+  rest_api_id = aws_api_gateway_rest_api.developer_api.id
+  resource_id = aws_api_gateway_resource.developer_api_resource.id
+  http_method = aws_api_gateway_method.developer_api_method.http_method
+  type        = "MOCK"
+}
+# S3 Bucket for CodePipeline Artifact Storage
+resource "aws_s3_bucket" "codepipeline_bucket" {
+  bucket = "developer-codepipeline-artifacts"
+}
+
+# IAM Role for CodePipeline
+resource "aws_iam_role" "codepipeline_role" {
+  name = "codepipeline-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action    = "sts:AssumeRole",
+      Effect    = "Allow",
+      Principal = {
+        Service = "codepipeline.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# CodePipeline definition
+resource "aws_codepipeline" "developer_pipeline" {
+  name     = "DeveloperPipeline"
+  role_arn = aws_iam_role.codepipeline_role.arn
+
+  artifact_store {
+    location = aws_s3_bucket.codepipeline_bucket.bucket
+    type     = "S3"
+  }
+
+  stage {
+    name = "Source"
+
+    action {
+      name             = "Source"
+      category         = "Source"
+      owner            = "AWS"
+      provider         = "S3"
+      version          = "1"
+      output_artifacts = ["source_output"]
+      configuration = {
+        S3Bucket = aws_s3_bucket.codepipeline_bucket.bucket
+        S3ObjectKey = "source.zip"
+      }
+    }
+  }
+
+  stage {
+    name = "Deploy"
+
+    action {
+      name             = "Deploy"
+      category         = "Deploy"
+      owner            = "AWS"
+      provider         = "CodeDeploy"
+      version          = "1"
+      input_artifacts  = ["source_output"]
+      configuration = {
+        ApplicationName = "MyApp"
+        DeploymentGroupName = "MyDeploymentGroup"
+      }
+    }
+  }
+}
+
+# Create the IAM Database Group
+resource "aws_iam_group" "database_group" {
+  name = "database-group"
+}
+
+# RDS Policy for the Database Group
+resource "aws_iam_group_policy" "database_rds_policy" {
+  group = aws_iam_group.database_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "rds:Describe*",
+          "rds:StartDBInstance",
+          "rds:StopDBInstance",
+          "rds:ModifyDBInstance",
+          "rds:CreateDBSnapshot",
+          "rds:DeleteDBSnapshot"
+        ],
+        Effect = "Allow",
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# S3 Policy for the Database Group
+resource "aws_iam_group_policy" "database_s3_policy" {
+  group = aws_iam_group.database_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        Effect = "Allow",
+        Resource = [
+          "arn:aws:s3:::my-backup-bucket",   # Replace with your S3 bucket name
+          "arn:aws:s3:::my-backup-bucket/*"  # Grant access to the bucket and its objects
+        ]
+      }
+    ]
+  })
+}
+
+# API Gateway Policy for the Database Group
+resource "aws_iam_group_policy" "database_api_gateway_policy" {
+  group = aws_iam_group.database_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "apigateway:GET",
+          "apigateway:POST",
+          "apigateway:DELETE",
+          "apigateway:PUT"
+        ],
+        Effect = "Allow",
+        Resource = "*"
+      }
+    ]
+  })
+}
+# Create KMS Key for encryption
+resource "aws_kms_key" "backup_kms_key" {
+  description = "KMS key for encrypting RDS and S3 backups"
+}
+
+# Create an AWS Backup Vault
+resource "aws_backup_vault" "database_backup_vault" {
+  name        = "database-backup-vault"
+  kms_key_arn = aws_kms_key.backup_kms_key.arn
+
+  tags = {
+    Name = "DatabaseBackupVault"
+  }
+}
+
+# Backup Plan for RDS and S3
+resource "aws_backup_plan" "database_backup_plan" {
+  name = "database-backup-plan"
+
+  rule {
+    rule_name         = "daily-backup"
+    target_vault_name = aws_backup_vault.database_backup_vault.name
+    schedule          = "cron(0 12 * * ? *)"  # Daily backup at 12 PM UTC
+    lifecycle {
+      delete_after = 30  # Retain backups for 30 days
+    }
+  }
+}
+
+# Backup selection for RDS
+resource "aws_backup_selection" "rds_backup_selection" {
+  name          = "rds-backup-selection"
+  iam_role_arn  = aws_iam_role.backup_role.arn
+  plan_id       = aws_backup_plan.database_backup_plan.id
+  resources = [
+    "arn:aws:rds:us-east-1:123456789012:db:my-rds-instance"  # Replace with your RDS instance ARN
+  ]
+}
+
+# Backup selection for S3
+resource "aws_backup_selection" "s3_backup_selection" {
+  name          = "s3-backup-selection"
+  iam_role_arn  = aws_iam_role.backup_role.arn
+  plan_id       = aws_backup_plan.database_backup_plan.id
+  resources = [
+    "arn:aws:s3:::my-backup-bucket"  # Replace with your S3 bucket ARN
+  ]
+}
+
+# Create IAM Role for AWS Backup
+resource "aws_iam_role" "backup_role" {
+  name = "BackupServiceRole"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "backup.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Attach permissions to the Backup role for RDS and S3
+resource "aws_iam_policy" "backup_policy" {
+  name = "BackupPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "rds:CreateDBSnapshot",
+          "rds:DescribeDBSnapshots",
+          "rds:DeleteDBSnapshot",
+          "s3:GetObject",
+          "s3:ListBucket"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "backup_policy_attach" {
+  role       = aws_iam_role.backup_role.name
+  policy_arn = aws_iam_policy.backup_policy.arn
+}

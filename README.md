@@ -13,7 +13,7 @@ This repository contains the Terraform infrastructure code for managing AWS serv
 
 ## Architecture
 
-The following architecture demonstrates the overall cloud infrastructure designed for NortonHealthcare, including integrations for DNSSEC, Route 53, CloudFront, API Gateway, and various security services.
+The following architecture demonstrates the overall cloud infrastructure designed for NortonHealthcare, including integrations for Route 53, CloudFront, API Gateway, and various security services.
 
 ![NortonHealthcare Architecture](NortonHealthcare.jpeg)
 

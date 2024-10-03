@@ -34,7 +34,7 @@ This infrastructure spans multiple AWS regions to ensure high availability and f
 - **us-east-1**: Primary region for resource creation, including Route 53, CloudFront, and API Gateway.
 - **us-east-2**: Backup region for disaster recovery, hosting redundant resources such as RDS and S3.
 - **us-west-2**: Additional region for high availability and backup configurations.
-- **eu-west-2**: European region for data redundancy and used for automatted backups.
+- **eu-west-2**: European region for data redundancy and used for automated backups.
 
 Resources are distributed across these regions to ensure multi-region redundancy and compliance with disaster recovery plans.
 

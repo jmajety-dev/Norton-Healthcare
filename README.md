@@ -1,7 +1,4 @@
-<<<<<<< HEAD
 # Norton-Healthcare
-=======
-# NortonHealthcare Infrastructure Project
 
 This repository contains the Terraform infrastructure code for managing AWS services such as AWS Firewall, Route 53, CloudFront, API Gateway, AWS Backup, GuardDuty, Macie, and CloudWatch, with an emphasis on security and HIPAA compliance for NortonHealthcare.
 

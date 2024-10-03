@@ -533,14 +533,14 @@ resource "aws_subnet" "public_subnet_us_west_1b" {
   }
 }
 
-resource "aws_db_subnet_group" "rds_subnet_group_us_west_1" {
-  provider = aws.us-west-1
-
-  name       = "rds-subnet-group-us-west-1"
-  subnet_ids = [aws_subnet.public_subnet_us_west_1a.id, aws_subnet.public_subnet_us_west_1b.id]
-
+resource "aws_subnet" "public_subnet_us_west_1c" {
+  provider                  = aws.us-west-1
+  vpc_id                    = aws_vpc.norton_vpc_us_west_1.id
+  cidr_block                = "10.1.3.0/24"
+  map_public_ip_on_launch   = true
+  availability_zone         = "us-west-1c"
   tags = {
-    Name = "rds-subnet-group-us-west-1"
+    Name = "public-subnet-us-west-1c"
   }
 }
 
@@ -567,12 +567,26 @@ resource "aws_security_group" "rds_sg_us_west_1" {
   }
 }
 
+
+
+
+
+# DB Subnet Group for RDS in us-west-1
+resource "aws_db_subnet_group" "rds_subnet_group_us_west_1" {
+  name       = "rds-subnet-group-us-west-1"
+  subnet_ids = [
+    aws_subnet.public_subnet_us_west_1a.id,
+    aws_subnet.public_subnet_us_west_1c.id
+  ]
+
+  tags = {
+    Name = "rds-subnet-group-us-west-1"
+  }
+}
+
 resource "aws_db_instance" "read_replica" {
-  provider               = aws.us-west-1
-  identifier             = "mydatabase-replica"
   replicate_source_db    = aws_db_instance.default.arn
   instance_class         = "db.t3.micro"
-  storage_type           = "gp2"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group_us_west_1.name
   vpc_security_group_ids = [aws_security_group.rds_sg_us_west_1.id]
 
@@ -582,14 +596,24 @@ resource "aws_db_instance" "read_replica" {
 }
 
 
-resource "aws_s3_bucket" "primary_backup_bucket" {
-  provider = aws.us-east-1
-  bucket   = "primary-backup-bucket"
 
-  tags = {
-    Name = "primary-backup-bucket"
-  }
+provider "aws" {
+  alias  = "eu-west-2"
+  region = "eu-west-2"
 }
+
+resource "aws_s3_bucket" "primary_backup_bucket" {
+  provider = aws.eu-west-2
+  bucket   = "primary-backup-bucket-eu"
+ 
+}
+
+resource "aws_s3_bucket_acl""primary_backup_bucket_acl" {
+  provider = aws.eu-west-2
+  bucket = aws_s3_bucket.primary_backup_bucket.bucket
+  acl = "private"
+}
+
 
 resource "aws_s3_bucket" "secondary_backup_bucket" {
   provider = aws.us-west-1
@@ -606,10 +630,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "primary_backup_en
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm = "AES256"
     }
   }
 }
+
 
 # Server-side encryption for the secondary bucket
 resource "aws_s3_bucket_server_side_encryption_configuration" "secondary_backup_encryption" {
@@ -632,14 +657,14 @@ resource "aws_s3_bucket_versioning" "primary_backup_versioning" {
   }
 }
 
-# Versioning for the secondary bucket
-resource "aws_s3_bucket_versioning" "secondary_backup_versioning" {
-  bucket = aws_s3_bucket.secondary_backup_bucket.bucket
+# # Versioning for the secondary bucket
+# resource "aws_s3_bucket_versioning" "secondary_backup_versioning" {
+#   bucket = aws_s3_bucket.secondary_backup_bucket.bucket
 
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
+#   versioning_configuration {
+#     status = "Enabled"
+#   }
+# }
 
 # Cross-region replication configuration
 resource "aws_s3_bucket_replication_configuration" "replication" {
@@ -714,7 +739,11 @@ resource "aws_rds_cluster" "norton_rds_cluster" {
   engine = "aurora-mysql"
   backup_retention_period = 7
   preferred_backup_window = "07:00-09:00"
-  # Additional RDS settings
+  master_username     = "admin"
+  master_password     = "YourSecurePassword"
+  # skip_final_snapshot = true  # Add this line to skip final snapshot for easy destroy and remove it if you want to keep the final snapshot
+  skip_final_snapshot     = false
+  final_snapshot_identifier = "11111"
 }
 
 # Snapshot copies to secondary region
@@ -727,7 +756,7 @@ resource "aws_db_cluster_snapshot" "norton_rds_snapshot" {
 resource "aws_s3_bucket_object" "rds_snapshot_backup" {
   provider = aws.us-west-1
   bucket = aws_s3_bucket.secondary_backup_bucket.bucket
-  key    = "rds-backup/${aws_db_cluster_snapshot.norton_rds_snapshot.id}.snap"
+  key    = "rds-backup/${aws_db_cluster_snapshot.norton_rds_snapshot.id}.snap" # It will be done once the backup is created
 
   source = aws_db_cluster_snapshot.norton_rds_snapshot.db_cluster_snapshot_identifier
 }
@@ -826,6 +855,10 @@ resource "aws_iam_group_policy" "developer_api_gateway_policy" {
     ]
   })
 }
+resource "aws_iam_user" "developer2" {
+  name = "developer2"
+}
+
 
 # CodePipeline Policy
 resource "aws_iam_group_policy" "developer_codepipeline_policy" {
@@ -853,9 +886,9 @@ resource "aws_iam_group_membership" "developer_group_membership" {
   group = aws_iam_group.developer_group.name
 
   users = [
-    "developer1",
-    "developer2" # Add more user names as needed
-  ]
+  #   "developer1",
+  #   "developer2" # Add your original IAM user here
+   ]
 }
 # Create API Gateway
 resource "aws_api_gateway_rest_api" "developer_api" {
@@ -1053,14 +1086,14 @@ resource "aws_backup_plan" "database_backup_plan" {
 }
 
 # Backup selection for RDS
-resource "aws_backup_selection" "rds_backup_selection" {
-  name          = "rds-backup-selection"
-  iam_role_arn  = aws_iam_role.backup_role.arn
-  plan_id       = aws_backup_plan.database_backup_plan.id
-  resources = [
-    "arn:aws:rds:us-east-1:123456789012:db:my-rds-instance"  # Replace with your RDS instance ARN
-  ]
-}
+# resource "aws_backup_selection" "rds_backup_selection" {
+#   name          = "rds-backup-selection"
+#   iam_role_arn  = aws_iam_role.backup_role.arn
+#   plan_id       = aws_backup_plan.database_backup_plan.id
+#   resources = [
+#     "arn:aws:rds:us-east-1:123456789012:db:my-rds-instance"                     # Replace with your actual RDS instance ARN
+#   ]
+# }
 
 # Backup selection for S3
 resource "aws_backup_selection" "s3_backup_selection" {
@@ -1186,17 +1219,21 @@ resource "aws_guardduty_detector" "guardduty" {
 }
 
 # Enable AWS Inspector
-resource "aws_inspector_assessment_template" "inspector_template" {
-  name             = "inspector-template"
-  target_arn       = aws_inspector_assessment_target.example.arn
-  duration = 3600  # Duration of the assessment (1 hour)
-  rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]  # Replace with your actual rules package ARN
-}
+# resource "aws_inspector_assessment_template" "inspector_template" {
+#   name             = "inspector-template"
+#   target_arn       = aws_inspector_assessment_target.example.arn
+#   duration = 3600  # Duration of the assessment (1 hour)
+#   rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]       # Replace with your actual rules package ARN and uncomment this resource
+# }
 
 resource "aws_inspector_assessment_target" "example" {
   name = "example-target"
 }
+# S3 Bucket for CloudTrail logs
+resource "aws_s3_bucket" "cloudtrail_logs" {
+  bucket = "cloudtrail-logs-bucket"
 
+}
 # Enable CloudTrail
 resource "aws_cloudtrail" "cloudtrail" {
   name                          = "security-cloudtrail"
@@ -1206,11 +1243,7 @@ resource "aws_cloudtrail" "cloudtrail" {
   enable_log_file_validation    = true
 }
 
-# S3 Bucket for CloudTrail logs
-resource "aws_s3_bucket" "cloudtrail_logs" {
-  bucket = "cloudtrail-logs-bucket"
 
-}
 
 
 # # Enable Macie
@@ -1285,10 +1318,7 @@ resource "aws_sns_topic_subscription" "email_subscription_security_team" {
   protocol  = "email"
   endpoint  = "securityteam@example.com"  # Replace with the actual email
 }
-# Enable GuardDuty
-resource "aws_guardduty_detector" "guardduty_detector_security" {
-  enable = true
-}
+
 
 
 # Create CloudWatch Event Rule for GuardDuty findings
@@ -1319,12 +1349,12 @@ resource "aws_inspector_assessment_target" "inspector_target" {
 }
 
 # Rename the duplicate AWS Inspector resource
-resource "aws_inspector_assessment_template" "inspector_template_security" {
-  name             = "inspector-template-security"
-  target_arn       = aws_inspector_assessment_target.example.arn
-  duration         = 3600
-  rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]  # Replace with your actual rules package ARN
-}
+# resource "aws_inspector_assessment_template" "inspector_template_security" {
+#   name             = "inspector-template-security"
+#   target_arn       = aws_inspector_assessment_target.example.arn
+#   duration         = 3600
+#   rules_package_arns = ["arn:aws:inspector:us-east-1:123456789012:rulespackage/0-123abcde"]          # Replace with your actual rules package ARN and uncomment this resource
+# }
 
 
 # SNS Target for Inspector Findings
@@ -1456,112 +1486,159 @@ resource "aws_route53_zone" "secure_zone" {
 
 
 # Create a Firewall Manager Admin Account
-resource "aws_organizations_organization" "organization" {
-  feature_set = "ALL"
-}
+# resource "aws_organizations_organization" "organization" {        # Uncomment this block if you are using AWS Organizations and enable the firewall manager
+#   feature_set = "ALL"
+# }
 
-resource "aws_fms_admin_account" "firewall_admin" {
-  account_id = "123456789012"  # Replace with the firewall manager admin account ID
-}
+# resource "aws_fms_admin_account" "firewall_admin" {
+#   account_id = "123456789012"  # Replace with the firewall manager admin account ID
+# }
 
 # Attach Policy to Security IT Team Group for Firewall Management
-resource "aws_iam_group_policy" "firewall_policy" {
-  group = aws_iam_group.security_it_team_group.name
+# resource "aws_iam_group_policy" "firewall_policy" {
+#   group = aws_iam_group.security_it_team_group.name
 
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = [
-          "fms:*",       # Full access to Firewall Manager
-          "wafv2:*",     # Access to Web Application Firewall (WAF)
-          "ec2:Describe*",  # Access to describe network settings
-        ],
-        Effect = "Allow",
-        Resource = "*"
-      }
-    ]
-  })
-}
+#   policy = jsonencode({
+#     Version = "2012-10-17",
+#     Statement = [
+#       {
+#         Action = [
+#           "fms:*",       # Full access to Firewall Manager
+#           "wafv2:*",     # Access to Web Application Firewall (WAF)
+#           "ec2:Describe*",  # Access to describe network settings
+#         ],
+#         Effect = "Allow",
+#         Resource = "*"
+#       }
+#     ]
+#   })
+# }
 # Create Route 53 Hosted Zone (if not already created in DNSSEC)
 resource "aws_route53_zone" "main_zone" {
-  name = "example.com"  # Replace with your domain name
+  name = "nortonhealth.com"  # Replace with your domain name
 }
 
 # Declare the API Gateway Rest API
 resource "aws_api_gateway_rest_api" "example_api" {
   name        = "example-api"
-  description = "Example API for Security IT Team"
+  description = "Dummy API Gateway for testing"
+}
+
+# Create an API resource (a path like /dummy)
+resource "aws_api_gateway_resource" "example_resource" {
+  rest_api_id = aws_api_gateway_rest_api.example_api.id
+  parent_id   = aws_api_gateway_rest_api.example_api.root_resource_id
+  path_part   = "dummy"  # This creates /dummy in the API path
+}
+
+# Define the GET method for the /dummy resource
+resource "aws_api_gateway_method" "example_method" {
+  rest_api_id   = aws_api_gateway_rest_api.example_api.id
+  resource_id   = aws_api_gateway_resource.example_resource.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
+
+# Integration for the GET method
+resource "aws_api_gateway_integration" "example_integration" {
+  rest_api_id = aws_api_gateway_rest_api.example_api.id
+  resource_id = aws_api_gateway_resource.example_resource.id
+  http_method = aws_api_gateway_method.example_method.http_method
+  type        = "MOCK"  # Using a mock integration as a dummy response
+}
+
+# Method Response for GET /dummy
+resource "aws_api_gateway_method_response" "example_method_response" {
+  rest_api_id = aws_api_gateway_rest_api.example_api.id
+  resource_id = aws_api_gateway_resource.example_resource.id
+  http_method = aws_api_gateway_method.example_method.http_method
+  status_code = "200"
+
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+# Integration Response for GET /dummy
+resource "aws_api_gateway_integration_response" "example_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.example_api.id
+  resource_id = aws_api_gateway_resource.example_resource.id
+  http_method = aws_api_gateway_method.example_method.http_method
+  status_code = aws_api_gateway_method_response.example_method_response.status_code
 }
 
 # API Gateway Deployment (Required for invoking the API)
 resource "aws_api_gateway_deployment" "example_api_deployment" {
-  depends_on = [aws_api_gateway_rest_api.example_api]  # Ensure the API is created first
+  depends_on = [
+    aws_api_gateway_integration.example_integration
+  ]  # Ensure the API integration is created first
+
   rest_api_id = aws_api_gateway_rest_api.example_api.id
   stage_name  = "prod"  # Define the stage for deployment
 }
 
-# Fix the Route 53 Record referencing the API Gateway
-resource "aws_route53_record" "api_gateway_record" {
-  zone_id = aws_route53_zone.main_zone.id
-  name    = "api.example.com"  # Subdomain for the API Gateway
-  type    = "A"
 
-  alias {
-    name                   = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference
-    zone_id                = aws_api_gateway_rest_api.example_api.id  # Fix the zone reference
-    evaluate_target_health = true
-  }
-}
+# Fix the Route 53 Record referencing the API Gateway
+# resource "aws_route53_record" "api_gateway_record" {
+#   zone_id = aws_route53_zone.main_zone.id
+#   name    = "api.norton.com"  # Subdomain for the API Gateway
+#   type    = "A"
+
+#   alias {
+#     name                   = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference with actual encryption id
+#     zone_id                = aws_api_gateway_rest_api.example_api.id  # Fix the zone reference with actual API ID
+#     evaluate_target_health = true
+#   }
+# }
 
 # Fix the CloudFront Distribution referencing the API Gateway
-resource "aws_cloudfront_distribution" "api_gw_distribution" {
-  origin {
-    domain_name = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference
-    origin_id   = "api-gateway-origin"
-  }
+# resource "aws_cloudfront_distribution" "api_gw_distribution" {
+#   origin {
+#     domain_name = aws_api_gateway_deployment.example_api_deployment.invoke_url  # Fix the reference
+#     origin_id   = "api-gateway-origin"
+#   }
 
-  enabled             = true
-  is_ipv6_enabled     = true
-  default_root_object = "index.html"
+#   enabled             = true
+#   is_ipv6_enabled     = true
+#   default_root_object = "index.html"
 
-  default_cache_behavior {
-    target_origin_id       = "api-gateway-origin"
-    viewer_protocol_policy = "redirect-to-https"
+#   default_cache_behavior {
+#     target_origin_id       = "api-gateway-origin"
+#     viewer_protocol_policy = "redirect-to-https"
 
-    allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD"]
-    forwarded_values {
-      query_string = false
-      cookies {
-        forward = "none"
-      }
-    }
-  }
+#     allowed_methods = ["GET", "HEAD", "OPTIONS"]
+#     cached_methods  = ["GET", "HEAD"]
+#     forwarded_values {
+#       query_string = false
+#       cookies {
+#         forward = "none"
+#       }
+#     }
+#   }
 
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
+#   restrictions {
+#     geo_restriction {
+#       restriction_type = "none"
+#     }
+#   }
 
-  viewer_certificate {
-    cloudfront_default_certificate = true
-  }
-}
+#   viewer_certificate {
+#     cloudfront_default_certificate = true
+#   }
+# }
 
 # Route 53 Alias record to CloudFront
-resource "aws_route53_record" "cloudfront_alias" {
-  zone_id = aws_route53_zone.main_zone.id
-  name    = "cdn.example.com"  # Subdomain for CloudFront
-  type    = "A"
+# resource "aws_route53_record" "cloudfront_alias" {
+#   zone_id = aws_route53_zone.main_zone.id
+#   name    = "cdn.example.com"  # Subdomain for CloudFront
+#   type    = "A"
 
-  alias {
-    name                   = aws_cloudfront_distribution.api_gw_distribution.domain_name
-    zone_id                = aws_cloudfront_distribution.api_gw_distribution.hosted_zone_id
-    evaluate_target_health = false
-  }
-}
+#   alias {
+#     name                   = aws_cloudfront_distribution.api_gw_distribution.domain_name        # Fix the reference with actual CloudFront distribution domain name
+#     zone_id                = aws_cloudfront_distribution.api_gw_distribution.hosted_zone_id     # Fix the reference with actual CloudFront distribution hosted zone ID
+#     evaluate_target_health = false
+#   }
+# }
 # API Gateway Setup (Already created, adding security permissions)
 
 # Attach API Gateway Access for IT Security Team

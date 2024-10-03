@@ -5,6 +5,7 @@ This repository contains the Terraform infrastructure code for managing AWS serv
 ## Table of Contents
 - [Architecture](#architecture)
 - [Features](#features)
+- [Regions Used](#regions-used)
 - [Setup Instructions](#setup-instructions)
 - [HIPAA Compliance](#hipaa-compliance)
 - [Disaster Recovery Plan](#disaster-recovery-plan)
@@ -25,6 +26,17 @@ The following architecture demonstrates the overall cloud infrastructure designe
 - **AWS Backup**: Automated backups for RDS and S3 resources, integrated with KMS for encryption.
 - **GuardDuty and Macie**: Security monitoring for unusual behavior and sensitive data discovery.
 - **CloudWatch and CloudTrail**: Monitoring and logging of infrastructure activity.
+
+## Regions Used
+
+This infrastructure spans multiple AWS regions to ensure high availability and fault tolerance. The following regions are used for resource creation and destruction:
+
+- **us-east-1**: Primary region for resource creation, including Route 53, CloudFront, and API Gateway.
+- **us-east-2**: Backup region for disaster recovery, hosting redundant resources such as RDS and S3.
+- **us-west-2**: Additional region for high availability and backup configurations.
+- **eu-west-2**: European region for data redundancy and used for automatted backups.
+
+Resources are distributed across these regions to ensure multi-region redundancy and compliance with disaster recovery plans.
 
 ## Setup Instructions
 
@@ -55,25 +67,12 @@ The following architecture demonstrates the overall cloud infrastructure designe
     terraform apply
     ```
 
+Make sure you have validated and created for all the four regions.
 
+### Destroying Resources
 
-## HIPAA Compliance
+To destroy the resources created by Terraform, run the following command:
 
-This infrastructure is designed to comply with **HIPAA** guidelines, ensuring that protected health information (PHI) is handled with the highest level of security and privacy. The following measures have been implemented to ensure compliance:
-- **Encryption**: All data stored in S3 and RDS is encrypted using AWS KMS, meeting HIPAA encryption requirements.
-- **Access Control**: IAM policies restrict access to sensitive data to authorized users only, ensuring role-based access control (RBAC).
-- **Audit Logs**: AWS CloudTrail is enabled to provide detailed audit logs for all API calls and activities across the infrastructure, ensuring traceability and accountability.
-- **Security Monitoring**: AWS GuardDuty and Macie are integrated to monitor for suspicious activity and the presence of sensitive data, ensuring ongoing protection of PHI.
-
-## Disaster Recovery Plan
-
-This infrastructure includes a comprehensive **disaster recovery plan** to ensure business continuity in the event of a disaster. The disaster recovery plan includes:
-- **Automated Backups**: AWS Backup is configured for RDS and S3, providing daily snapshots and data retention policies.
-- **Multi-Region Redundancy**: S3 and RDS snapshots are replicated across regions to ensure data is recoverable even in the event of a regional failure.
-- **Failover Mechanisms**: Route 53 is configured with failover policies, allowing traffic to be rerouted to backup instances in case of service disruptions.
-- **Recovery Time Objective (RTO)**: The infrastructure is designed to recover critical systems within the shortest possible time frame, reducing downtime.
-- **Recovery Point Objective (RPO)**: Regular backups ensure that data can be restored to the most recent state, minimizing data loss in case of disaster.
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+```bash
+terraform destroy
+```

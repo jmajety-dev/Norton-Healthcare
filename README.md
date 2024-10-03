@@ -79,4 +79,4 @@ To destroy the resources created by Terraform, run the following command:
 ```bash
 terraform destroy
 ```
->>>>>>> origin/jitesh-dev
+
